@@ -1,24 +1,33 @@
 package ro.alexv.mclovin
 
 import android.app.AlertDialog
-import android.graphics.Point
 import android.net.Uri
 import android.os.Bundle
 import android.support.v7.app.AppCompatActivity
+import android.util.Log
+import android.view.GestureDetector
 import android.view.Menu
 import android.view.MenuItem
-import android.view.View
-import com.google.ar.core.Anchor
+import android.view.MotionEvent
+import com.google.ar.core.Frame
 import com.google.ar.core.Plane
+import com.google.ar.core.TrackingState
 import com.google.ar.sceneform.AnchorNode
+import com.google.ar.sceneform.ArSceneView
+import com.google.ar.sceneform.Node
 import com.google.ar.sceneform.rendering.ModelRenderable
 import com.google.ar.sceneform.ux.ArFragment
 import com.google.ar.sceneform.ux.TransformableNode
-import kotlinx.android.synthetic.main.activity_main.*
 
 class MainActivity : AppCompatActivity() {
 
-    lateinit var fragment: ArFragment
+    private lateinit var fragment: ArFragment
+
+    private lateinit var heartRenderable: ModelRenderable
+
+    private lateinit var gestureDetector: GestureDetector
+
+    private lateinit var arSceneView: ArSceneView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -26,37 +35,13 @@ class MainActivity : AppCompatActivity() {
 
         fragment = supportFragmentManager.findFragmentById(R.id.sceneform_fragment) as ArFragment
 
-        fab.setOnClickListener {
-            addObject(Uri.parse("Heart.sfb"))
-        }
-    }
+        arSceneView = fragment.arSceneView
 
-    private fun addObject(uri: Uri) {
-        val frame = fragment.arSceneView.arFrame
-        val point = getScreenCenter()
-        if (frame != null) {
-            val hits = frame.hitTest(point.x.toFloat(), point.y.toFloat())
-            for (hit in hits) {
-                val trackable = hit.trackable
-                if (trackable is Plane && trackable.isPoseInPolygon(hit.hitPose)) {
-                    placeObject(fragment, hit.createAnchor(), uri)
-                    break
-                }
-            }
-        }
-    }
-
-    private fun getScreenCenter(): android.graphics.Point {
-        val vw = findViewById<View>(android.R.id.content)
-        return Point(vw.width / 2, vw.height / 2)
-    }
-
-    private fun placeObject(fragment: ArFragment, anchor: Anchor, model: Uri) {
         ModelRenderable.builder()
-                .setSource(fragment.context, model)
+                .setSource(this, Uri.parse("Heart.sfb"))
                 .build()
-                .thenAccept {
-                    addNodeToScene(fragment, anchor, it)
+                .thenAccept { renderable ->
+                    heartRenderable = renderable
                 }
                 .exceptionally {
                     val builder = AlertDialog.Builder(this)
@@ -66,15 +51,57 @@ class MainActivity : AppCompatActivity() {
                     dialog.show()
                     return@exceptionally null
                 }
+
+        gestureDetector = GestureDetector(
+                this,
+                object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onSingleTapUp(e: MotionEvent): Boolean {
+                        onSingleTap(e)
+                        return true
+                    }
+
+                    override fun onDown(e: MotionEvent): Boolean {
+                        return true
+                    }
+                })
+
+        arSceneView.scene.setOnTouchListener { hitTest, event ->
+            Log.e(localClassName, "hit")
+            gestureDetector.onTouchEvent(event)
+        }
     }
 
-    private fun addNodeToScene(fragment: ArFragment, anchor: Anchor, renderable: ModelRenderable) {
-        val anchorNode = AnchorNode(anchor)
-        val transformableNode = TransformableNode(fragment.transformationSystem)
-        transformableNode.renderable = renderable
-        transformableNode.setParent(anchorNode)
-        fragment.arSceneView.scene.addChild(anchorNode)
-        transformableNode.select()
+    private fun onSingleTap(tap: MotionEvent) {
+        val frame = arSceneView.arFrame
+        if (frame != null) {
+            tryPlaceHeart(tap, frame)
+        }
+    }
+
+    private fun tryPlaceHeart(tap: MotionEvent?, frame: Frame): Boolean {
+        if (tap != null && frame.camera.trackingState == TrackingState.TRACKING) {
+            for (hit in frame.hitTest(tap)) {
+                val trackable = hit.trackable
+                if (trackable is Plane && trackable.isPoseInPolygon(hit.hitPose)) {
+                    // Create the Anchor.
+                    val anchor = hit.createAnchor()
+                    val anchorNode = AnchorNode(anchor)
+                    anchorNode.setParent(arSceneView.scene)
+                    anchorNode.addChild(createHeartNode())
+
+                    return true
+                }
+            }
+        }
+
+        return false
+    }
+
+    private fun createHeartNode(): Node {
+        val rotatingNode = RotatingNode(fragment.transformationSystem)
+        rotatingNode.renderable = heartRenderable
+        rotatingNode.select()
+        return rotatingNode
     }
 
 
